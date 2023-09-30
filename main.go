@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -19,8 +21,18 @@ type Event struct {
 	Payload string `json:"payload"`
 }
 
+type FailedEvent struct {
+	Event      Event
+	RetryCount int
+}
+
 var rdb *redis.Client
 var ctx = context.Background()
+var logger = logrus.New()
+
+const (
+	MaxRetries = 5
+)
 
 func initializeRedis() {
 	rdb = redis.NewClient(&redis.Options{
@@ -61,6 +73,7 @@ func ingestEventHandler(w http.ResponseWriter, r *http.Request) {
 // Mock function to simulate sending the event to a destination.
 // Randomly returns success or failure.
 func sendToDestination(event Event) bool {
+	_ = event
 	// Let's say there's an 80% chance of success.
 	return rand.Intn(100) < 80
 }
@@ -95,12 +108,102 @@ func processEvent() {
 	}
 }
 
+func scheduleRetry(event FailedEvent) {
+	// Increase the retry count
+	event.RetryCount++
+
+	// If retries are exhausted, log and potentially alert
+	if event.RetryCount > MaxRetries {
+		log.Printf("Failed to deliver event after %d attempts: %v", MaxRetries, event.Event)
+		// TODO: Notify administrators or take other action
+		return
+	}
+
+	// Calculate next retry time with exponential backoff
+	backoffDuration := time.Duration(math.Pow(2, float64(event.RetryCount))) * time.Second
+	retryTimestamp := time.Now().Add(backoffDuration).Unix()
+
+	eventJSON, _ := json.Marshal(event)
+	rdb.ZAdd(ctx, "retry_events", &redis.Z{
+		Score:  float64(retryTimestamp),
+		Member: eventJSON,
+	})
+}
+
+func processFailedEvents(workerID int) {
+	for {
+		now := time.Now().Unix()
+
+		// Fetch events scheduled for retry up to the current timestamp
+		events, err := rdb.ZRangeByScoreWithScores(ctx, "retry_events", &redis.ZRangeBy{
+			Min:    "0",
+			Max:    fmt.Sprintf("%d", now),
+			Offset: 0,
+			Count:  1,
+		}).Result()
+
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"workerID": workerID,
+				"error":    err,
+			}).Error("Failed to fetch events for retry")
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		if len(events) == 0 {
+			time.Sleep(5 * time.Second) // No events ready for retry, sleep for a while
+			continue
+		}
+
+		var failedEvent FailedEvent
+		err = json.Unmarshal([]byte(events[0].Member.(string)), &failedEvent)
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"workerID": workerID,
+				"error":    err,
+			}).Error("Error unmarshalling failed event")
+			continue
+		}
+
+		success := sendToDestination(failedEvent.Event)
+		if success {
+			logger.WithFields(logrus.Fields{
+				"workerID": workerID,
+				"event":    failedEvent.Event,
+			}).Info("Event delivered successfully on retry")
+
+			rdb.ZRem(ctx, "retry_events", events[0].Member)
+		} else {
+			if failedEvent.RetryCount > MaxRetries {
+				logger.WithFields(logrus.Fields{
+					"workerID": workerID,
+					"event":    failedEvent.Event,
+				}).Warn("Max retries exhausted for event")
+			} else {
+				logger.WithFields(logrus.Fields{
+					"workerID": workerID,
+					"event":    failedEvent.Event,
+				}).Info("Retry failed for event, rescheduling")
+			}
+
+			rdb.ZRem(ctx, "retry_events", events[0].Member)
+			scheduleRetry(failedEvent)
+		}
+	}
+}
+
 func main() {
 	initializeRedis()
 	defer rdb.Close()
 
 	// Start a Go routine for processing events.
 	go processEvent()
+
+	// Start a separate routine to process failed events
+	for i := 0; i < 5; i++ {
+		go processFailedEvents(i)
+	}
 
 	http.HandleFunc("/ingest", ingestEventHandler)
 
