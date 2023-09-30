@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	"golang.org/x/net/context"
@@ -56,9 +58,49 @@ func ingestEventHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "Event ingested successfully")
 }
 
+// Mock function to simulate sending the event to a destination.
+// Randomly returns success or failure.
+func sendToDestination(event Event) bool {
+	// Let's say there's an 80% chance of success.
+	return rand.Intn(100) < 80
+}
+
+func processEvent() {
+	for {
+		// Pop an event from the front of Redis list (blocking until one is available).
+		eventJSON, err := rdb.BLPop(ctx, 0*time.Second, "events").Result()
+		if err != nil {
+			log.Printf("Error fetching event from Redis: %v", err)
+			time.Sleep(5 * time.Second) // Sleep for a while before retrying
+			continue
+		}
+
+		var event Event
+		if len(eventJSON) < 2 {
+			log.Println("Error: Unexpected BLPop result format")
+			continue
+		}
+		err = json.Unmarshal([]byte(eventJSON[1]), &event)
+		if err != nil {
+			log.Printf("Error unmarshaling event: %v", err)
+			continue
+		}
+
+		success := sendToDestination(event)
+		if success {
+			log.Println("Event delivered successfully:", event)
+		} else {
+			log.Println("Failed to deliver event:", event)
+		}
+	}
+}
+
 func main() {
 	initializeRedis()
 	defer rdb.Close()
+
+	// Start a Go routine for processing events.
+	go processEvent()
 
 	http.HandleFunc("/ingest", ingestEventHandler)
 
