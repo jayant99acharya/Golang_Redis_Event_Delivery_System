@@ -26,6 +26,10 @@ type FailedEvent struct {
 	RetryCount int
 }
 
+type Destination interface {
+	Send(event Event) bool
+}
+
 var rdb *redis.Client
 var ctx = context.Background()
 var logger = logrus.New()
@@ -73,9 +77,19 @@ func ingestEventHandler(w http.ResponseWriter, r *http.Request) {
 // Mock function to simulate sending the event to a destination.
 // Randomly returns success or failure.
 func sendToDestination(event Event) bool {
-	_ = event
-	// Let's say there's an 80% chance of success.
-	return rand.Intn(100) < 80
+	destinations := []Destination{
+		&MockDestination1{},
+		&MockDestination2{},
+		&MockDestination3{},
+	}
+
+	for _, dest := range destinations {
+		success := dest.Send(event)
+		if !success {
+			return false // Event delivery failed for one of the destinations
+		}
+	}
+	return true
 }
 
 func processEvent() {
@@ -104,6 +118,10 @@ func processEvent() {
 			log.Println("Event delivered successfully:", event)
 		} else {
 			log.Println("Failed to deliver event:", event)
+			scheduleRetry(FailedEvent{
+				Event:      event,
+				RetryCount: 1, // Initial retry attempt
+			})
 		}
 	}
 }
@@ -191,6 +209,34 @@ func processFailedEvents(workerID int) {
 			scheduleRetry(failedEvent)
 		}
 	}
+}
+
+// MockDestination1 : A destination that succeeds 80% of the time and fails 20% of the time
+type MockDestination1 struct{}
+
+func (md *MockDestination1) Send(event Event) bool {
+	randNum := rand.Intn(100)
+	if randNum < 80 {
+		return true
+	}
+	return false
+}
+
+// MockDestination2 : A destination that introduces random delays (up to 2 seconds)
+type MockDestination2 struct{}
+
+func (md *MockDestination2) Send(event Event) bool {
+	randDuration := time.Duration(rand.Intn(2000)) * time.Millisecond
+	time.Sleep(randDuration)
+	return true
+}
+
+// MockDestination3 : A destination that always succeeds but logs the received event
+type MockDestination3 struct{}
+
+func (md *MockDestination3) Send(event Event) bool {
+	fmt.Printf("MockDestination3 received event: %+v\n", event)
+	return true
 }
 
 func main() {
