@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/smtp"
 	"os"
 	"time"
 
@@ -36,6 +37,13 @@ var logger = logrus.New()
 
 const (
 	MaxRetries = 5
+)
+
+const (
+	adminEmail    = "admin@example.com"
+	emailServer   = "smtp.example.com:587"
+	emailUser     = "notify@example.com"
+	emailPassword = "password"
 )
 
 func initializeRedis() {
@@ -133,7 +141,7 @@ func scheduleRetry(event FailedEvent) {
 	// If retries are exhausted, log and potentially alert
 	if event.RetryCount > MaxRetries {
 		log.Printf("Failed to deliver event after %d attempts: %v", MaxRetries, event.Event)
-		// TODO: Notify administrators or take other action
+		notifyAdmin("Event Delivery Failed", fmt.Sprintf("Failed to deliver event after %d attempts: %v", MaxRetries, event.Event))
 		return
 	}
 
@@ -237,6 +245,20 @@ type MockDestination3 struct{}
 func (md *MockDestination3) Send(event Event) bool {
 	fmt.Printf("MockDestination3 received event: %+v\n", event)
 	return true
+}
+
+func notifyAdmin(subject, body string) {
+	from := emailUser
+	to := []string{adminEmail}
+	msg := "From: " + from + "\n" +
+		"To: " + adminEmail + "\n" +
+		"Subject: " + subject + "\n\n" +
+		body
+
+	err := smtp.SendMail(emailServer, smtp.PlainAuth("", emailUser, emailPassword, "smtp.example.com"), from, to, []byte(msg))
+	if err != nil {
+		log.Printf("Error notifying admin: %v", err)
+	}
 }
 
 func main() {
