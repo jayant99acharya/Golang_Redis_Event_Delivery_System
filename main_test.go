@@ -88,7 +88,7 @@ var _ = Describe("Main", func() {
 	})
 
 	Describe("scheduleRetry", func() {
-		// ... other tests ...
+		// ... other tests ... if any needed...
 		Context("when the event has not exceeded max retries", func() {
 			It("should schedule a retry for the failed event", func() {
 				failedEvent := FailedEvent{
