@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	. "github.com/onsi/ginkgo"
@@ -49,6 +50,32 @@ var _ = Describe("Main", func() {
 
 			length := rdb.LLen(ctx, "events").Val()
 			Expect(length).To(Equal(int64(0)))
+		})
+	})
+
+	Describe("sendToDestination", func() {
+		Context("with valid destinations", func() {
+			It("should attempt to send to all destinations", func() {
+				mockEvent := Event{UserID: "testUser", Payload: "testPayload"}
+				success := sendToDestination(mockEvent)
+				Expect(success).To(BeTrue())
+			})
+		})
+	})
+
+	Describe("processFailedEvents", func() {
+		It("should process failed events and retry", func() {
+			failedEvent := FailedEvent{Event: Event{UserID: "testUser", Payload: "testPayload"}, RetryCount: 0}
+			eventJSON, _ := json.Marshal(failedEvent)
+			rdb.ZAdd(ctx, "retry_events", &redis.Z{
+				Score:  float64(time.Now().Unix()),
+				Member: eventJSON,
+			})
+
+			processFailedEvents(1)
+
+			retryLength := rdb.ZCard(ctx, "retry_events").Val()
+			Expect(retryLength).To(Equal(int64(0)))
 		})
 	})
 })
