@@ -60,3 +60,41 @@ func setupRedisMock() *redis.Client {
 		DB:   1, // Use a different DB for testing
 	})
 }
+
+var _ = Describe("Integration", func() {
+	var r *redis.Client
+
+	BeforeEach(func() {
+		r = setupRedisMock()
+		rdb = r
+	})
+
+	AfterEach(func() {
+		r.Close()
+	})
+
+	Context("from event ingestion to mock delivery", func() {
+		It("should ingest, process, and deliver the event", func() {
+			// Step 1: Ingest an event
+			mockEvent := Event{UserID: "testUser", Payload: "testPayload"}
+			body, _ := json.Marshal(mockEvent)
+			req, _ := http.NewRequest("POST", "/ingest", bytes.NewBuffer(body))
+			rr := httptest.NewRecorder()
+
+			handler := http.HandlerFunc(ingestEventHandler)
+			handler.ServeHTTP(rr, req)
+
+			Expect(rr.Code).To(Equal(http.StatusOK))
+
+			// Step 2: Process the event
+			processEvent()
+
+			// Step 3 & 4: Check event delivery or retry
+			length := rdb.LLen(ctx, "events").Val()
+			Expect(length).To(Equal(int64(0)))
+
+			retryLength := rdb.ZCard(ctx, "retry_events").Val()
+			Expect(retryLength).To(Equal(int64(0)))
+		})
+	})
+})
