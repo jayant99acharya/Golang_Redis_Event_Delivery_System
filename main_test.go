@@ -12,6 +12,14 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+func setupRedisMock() *redis.Client {
+	// Assuming a Redis test instance for this example.
+	return redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+		DB:   1, // Use a different DB for testing
+	})
+}
+
 var _ = Describe("Main", func() {
 	var r *redis.Client
 
@@ -78,15 +86,44 @@ var _ = Describe("Main", func() {
 			Expect(retryLength).To(Equal(int64(0)))
 		})
 	})
-})
 
-func setupRedisMock() *redis.Client {
-	// Assuming a Redis test instance for this example.
-	return redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-		DB:   1, // Use a different DB for testing
+	Describe("scheduleRetry", func() {
+		// ... other tests ...
+		Context("when the event has not exceeded max retries", func() {
+			It("should schedule a retry for the failed event", func() {
+				failedEvent := FailedEvent{
+					Event:      Event{UserID: "testUser", Payload: "testPayload"},
+					RetryCount: 1,
+				}
+				scheduleRetry(failedEvent)
+
+				// Fetch from your mock Redis client to check if the event was added for retry.
+				// Depending on your mock, check the relevant method/property.
+				retryEventJSON := "YOUR MOCK REDIS FETCH HERE"
+				var retriedEvent FailedEvent
+				json.Unmarshal([]byte(retryEventJSON), &retriedEvent)
+
+				Expect(retriedEvent.RetryCount).To(Equal(2))
+			})
+		})
+
+		Context("when max retries are exhausted", func() {
+			var calledWithSubject string
+			var calledWithBody string
+
+			It("should notify the admin and not schedule a retry", func() {
+				failedEvent := FailedEvent{
+					Event:      Event{UserID: "testUser", Payload: "testPayload"},
+					RetryCount: MaxRetries,
+				}
+				scheduleRetry(failedEvent)
+
+				Expect(calledWithSubject).To(Equal("Event Delivery Failed"))
+				Expect(calledWithBody).To(ContainSubstring("Failed to deliver event after"))
+			})
+		})
 	})
-}
+})
 
 var _ = Describe("Integration", func() {
 	var r *redis.Client
