@@ -22,30 +22,33 @@ type Event struct {
 	Payload string `json:"payload"`
 }
 
+// FailedEvent represents an event that has failed delivery, along with the count of retry attempts.
 type FailedEvent struct {
 	Event      Event
 	RetryCount int
 }
 
+// Destination interface represents any target to which we want to send our event.
 type Destination interface {
 	Send(event Event) bool
 }
 
-var rdb *redis.Client
-var ctx = context.Background()
-var logger = logrus.New()
-
-const (
-	MaxRetries = 5
+var (
+	rdb    *redis.Client          // Redis client
+	ctx    = context.Background() // Global context for Redis operations
+	logger = logrus.New()         // Logger instance
 )
 
 const (
+	MaxRetries = 5 // Max attempts to retry sending an event
+
 	adminEmail    = "admin@example.com"
 	emailServer   = "smtp.example.com:587"
 	emailUser     = "notify@example.com"
 	emailPassword = "password"
 )
 
+// initializeRedis sets up a connection to the Redis server.
 func initializeRedis() {
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379", // Redis server address
@@ -59,6 +62,7 @@ func initializeRedis() {
 	}
 }
 
+// ingestEventHandler handles incoming HTTP requests to ingest events.
 func ingestEventHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Only POST method is supported", http.StatusMethodNotAllowed)
@@ -100,6 +104,7 @@ func sendToDestination(event Event) bool {
 	return true
 }
 
+// processEvent continuously tries to fetch events from Redis and sends them to their destinations.
 func processEvent() {
 	for {
 		// Pop an event from the front of Redis list (blocking until one is available).
@@ -134,6 +139,7 @@ func processEvent() {
 	}
 }
 
+// scheduleRetry schedules the failed event for a retry in the future.
 func scheduleRetry(event FailedEvent) {
 	// Increase the retry count
 	event.RetryCount++
@@ -156,6 +162,7 @@ func scheduleRetry(event FailedEvent) {
 	})
 }
 
+// processFailedEvents continuously checks for events that are due for a retry and attempts to send them.
 func processFailedEvents(workerID int) {
 	for {
 		now := time.Now().Unix()
@@ -247,6 +254,7 @@ func (md *MockDestination3) Send(event Event) bool {
 	return true
 }
 
+// notifyAdmin sends an email notification to the admin about the failure to deliver an event.
 func notifyAdmin(subject, body string) {
 	from := emailUser
 	to := []string{adminEmail}
@@ -262,8 +270,8 @@ func notifyAdmin(subject, body string) {
 }
 
 func main() {
-	initializeRedis()
-	defer rdb.Close()
+	initializeRedis() // Initialize our Redis client
+	defer rdb.Close() // Ensure we close the Redis client when our program exits
 
 	// Start a Go routine for processing events.
 	go processEvent()
@@ -273,6 +281,7 @@ func main() {
 		go processFailedEvents(i)
 	}
 
+	// Set up our HTTP server.
 	http.HandleFunc("/ingest", ingestEventHandler)
 
 	port := os.Getenv("PORT")
