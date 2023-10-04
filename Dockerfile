@@ -1,5 +1,7 @@
 # Start from a Debian based image with the latest version of Go installed
 # and a workspace (GOPATH) configured at /go.
+# A sample dockerfile
+
 FROM golang:latest
 
 # Copy the local package files to the container's workspace.

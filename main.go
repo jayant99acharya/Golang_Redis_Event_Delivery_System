@@ -115,11 +115,12 @@ func initializeRedis() {
 		DB:       0,                // Default DB
 	})
 
+	rdb = &RedisClientWrapper{Client: client}
+
 	_, err := rdb.Ping(ctx).Result()
 	if err != nil {
 		log.Fatalf("Error initializing Redis: %v", err)
 	}
-	rdb = &RedisClientWrapper{Client: client}
 }
 
 // ingestEventHandler handles incoming HTTP requests to ingest events.
