@@ -16,6 +16,21 @@ import (
 	"golang.org/x/net/context"
 )
 
+var (
+	rdb    RedisClientInterface   // Redis client
+	ctx    = context.Background() // Global context for Redis operations
+	logger = logrus.New()         // Logger instance
+)
+
+const (
+	MaxRetries = 5 // Max attempts to retry sending an event
+
+	adminEmail    = "admin@example.com"
+	emailServer   = "smtp.example.com:587"
+	emailUser     = "notify@example.com"
+	emailPassword = "password"
+)
+
 // Event represents the structure for the incoming event data
 type Event struct {
 	UserID  string `json:"userID"`
@@ -33,24 +48,68 @@ type Destination interface {
 	Send(event Event) bool
 }
 
-var (
-	rdb    *redis.Client          // Redis client
-	ctx    = context.Background() // Global context for Redis operations
-	logger = logrus.New()         // Logger instance
-)
+// RedisClientInterface interface represents the command used by redis client
+type RedisClientInterface interface {
+	Ping(ctx context.Context) *redis.StatusCmd
+	RPush(ctx context.Context, key string, values ...interface{}) *redis.IntCmd
+	LLen(ctx context.Context, key string) *redis.IntCmd
+	ZAdd(ctx context.Context, key string, members ...*redis.Z) *redis.IntCmd
+	ZRangeByScoreWithScores(ctx context.Context, key string, opt *redis.ZRangeBy) *redis.ZSliceCmd
+	ZRem(ctx context.Context, key string, members ...interface{}) *redis.IntCmd
+	BLPop(ctx context.Context, timeout time.Duration, keys ...string) *redis.StringSliceCmd
+	ZCard(ctx context.Context, key string) *redis.IntCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
+	Close() error
+}
 
-const (
-	MaxRetries = 5 // Max attempts to retry sending an event
+// RedisClientWrapper that wraps the actual client, satisfying our interface
+type RedisClientWrapper struct {
+	Client *redis.Client
+}
 
-	adminEmail    = "admin@example.com"
-	emailServer   = "smtp.example.com:587"
-	emailUser     = "notify@example.com"
-	emailPassword = "password"
-)
+func (wrapper *RedisClientWrapper) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	return wrapper.Client.Del(ctx, keys...)
+}
+
+func (wrapper *RedisClientWrapper) ZCard(ctx context.Context, key string) *redis.IntCmd {
+	return wrapper.Client.ZCard(ctx, key)
+}
+
+func (wrapper *RedisClientWrapper) BLPop(ctx context.Context, timeout time.Duration, keys ...string) *redis.StringSliceCmd {
+	return wrapper.Client.BLPop(ctx, timeout, keys...)
+}
+
+func (wrapper *RedisClientWrapper) Close() error {
+	return wrapper.Client.Close()
+}
+
+func (wrapper *RedisClientWrapper) Ping(ctx context.Context) *redis.StatusCmd {
+	return wrapper.Client.Ping(ctx)
+}
+
+func (wrapper *RedisClientWrapper) RPush(ctx context.Context, key string, values ...interface{}) *redis.IntCmd {
+	return wrapper.Client.RPush(ctx, key, values...)
+}
+
+func (wrapper *RedisClientWrapper) LLen(ctx context.Context, key string) *redis.IntCmd {
+	return wrapper.Client.LLen(ctx, key)
+}
+
+func (wrapper *RedisClientWrapper) ZAdd(ctx context.Context, key string, members ...*redis.Z) *redis.IntCmd {
+	return wrapper.Client.ZAdd(ctx, key, members...)
+}
+
+func (wrapper *RedisClientWrapper) ZRangeByScoreWithScores(ctx context.Context, key string, opt *redis.ZRangeBy) *redis.ZSliceCmd {
+	return wrapper.Client.ZRangeByScoreWithScores(ctx, key, opt)
+}
+
+func (wrapper *RedisClientWrapper) ZRem(ctx context.Context, key string, members ...interface{}) *redis.IntCmd {
+	return wrapper.Client.ZRem(ctx, key, members...)
+}
 
 // initializeRedis sets up a connection to the Redis server.
 func initializeRedis() {
-	rdb = redis.NewClient(&redis.Options{
+	client := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379", // Redis server address
 		Password: "",               // No password
 		DB:       0,                // Default DB
@@ -60,6 +119,7 @@ func initializeRedis() {
 	if err != nil {
 		log.Fatalf("Error initializing Redis: %v", err)
 	}
+	rdb = &RedisClientWrapper{Client: client}
 }
 
 // ingestEventHandler handles incoming HTTP requests to ingest events.
@@ -107,35 +167,37 @@ func sendToDestination(event Event) bool {
 // processEvent continuously tries to fetch events from Redis and sends them to their destinations.
 func processEvent() {
 	for {
-		// Pop an event from the front of Redis list (blocking until one is available).
-		eventJSON, err := rdb.BLPop(ctx, 0*time.Second, "events").Result()
-		if err != nil {
-			log.Printf("Error fetching event from Redis: %v", err)
-			time.Sleep(5 * time.Second) // Sleep for a while before retrying
-			continue
-		}
+		processSingleEvent()
+	}
+}
 
-		var event Event
-		if len(eventJSON) < 2 {
-			log.Println("Error: Unexpected BLPop result format")
-			continue
-		}
-		err = json.Unmarshal([]byte(eventJSON[1]), &event)
-		if err != nil {
-			log.Printf("Error unmarshaling event: %v", err)
-			continue
-		}
+// processSingleEvent tries to fetch one event from Redis and sends it to its destination.
+func processSingleEvent() {
+	// Pop an event from the front of Redis list (blocking until one is available).
+	eventJSON, err := rdb.BLPop(ctx, 0*time.Second, "events").Result()
+	if err != nil {
+		log.Printf("Error fetching event from Redis: %v", err)
+		return
+	}
 
-		success := sendToDestination(event)
-		if success {
-			log.Println("Event delivered successfully:", event)
-		} else {
-			log.Println("Failed to deliver event:", event)
-			scheduleRetry(FailedEvent{
-				Event:      event,
-				RetryCount: 1, // Initial retry attempt
-			})
-		}
+	if len(eventJSON) < 2 {
+		log.Println("Error: Unexpected BLPop result format")
+		return
+	}
+	var event Event
+	err = json.Unmarshal([]byte(eventJSON[1]), &event)
+	if err != nil {
+		log.Printf("Error unmarshaling event: %v", err)
+		return
+	}
+
+	success := sendToDestination(event)
+	if !success {
+		log.Println("Failed to deliver event:", event)
+		scheduleRetry(FailedEvent{
+			Event:      event,
+			RetryCount: 1, // Initial retry attempt
+		})
 	}
 }
 
