@@ -109,12 +109,13 @@ func (wrapper *RedisClientWrapper) ZRem(ctx context.Context, key string, members
 
 // initializeRedis sets up a connection to the Redis server.
 func initializeRedis() {
+	myredis := "myredis:6379" // Redis server address
 	client := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379", // Redis server address
-		Password: "",               // No password
-		DB:       0,                // Default DB
+		Addr:     myredis,
+		Password: "", // No password
+		DB:       0,  // Default DB
 	})
-
+	fmt.Println("Initialised redis", myredis)
 	rdb = &RedisClientWrapper{Client: client}
 
 	_, err := rdb.Ping(ctx).Result()
@@ -294,9 +295,11 @@ type MockDestination1 struct{}
 
 func (md *MockDestination1) Send(event Event) bool {
 	randNum := rand.Intn(100)
-	if randNum < 80 {
+	if randNum < 0 {
+		fmt.Printf("MockDestination1 successfully received event: %+v\n", event)
 		return true
 	}
+	fmt.Printf("MockDestination1 failed to successfully receive event: %+v\n", event)
 	return false
 }
 
@@ -306,6 +309,7 @@ type MockDestination2 struct{}
 func (md *MockDestination2) Send(event Event) bool {
 	randDuration := time.Duration(rand.Intn(2000)) * time.Millisecond
 	time.Sleep(randDuration)
+	fmt.Printf("MockDestination2 successfully received event: %+v\n", event)
 	return true
 }
 
@@ -313,7 +317,7 @@ func (md *MockDestination2) Send(event Event) bool {
 type MockDestination3 struct{}
 
 func (md *MockDestination3) Send(event Event) bool {
-	fmt.Printf("MockDestination3 received event: %+v\n", event)
+	fmt.Printf("MockDestination3 successfully received event: %+v\n", event)
 	return true
 }
 

@@ -1,20 +1,15 @@
-# Start from a Debian based image with the latest version of Go installed
-# and a workspace (GOPATH) configured at /go.
-# A sample dockerfile
-
+# Start from a base image
 FROM golang:latest
 
-# Copy the local package files to the container's workspace.
-ADD . /go/src/myapp
+# Set the Current Working Directory inside the container
+WORKDIR /app
 
-# Set the current working directory inside the container.
-WORKDIR /go/src/myapp
+# Copy the source from the current directory to the Working Directory inside the container
+COPY . .
 
-# Build the Go app
-RUN go build .
+# Build the application
+RUN go build -o output main.go
 
-# This container exposes port 8080 to the outside world
-EXPOSE 8080
+# Command to run the executable
+CMD ["./output"]
 
-# Run the binary program produced by `go install`
-CMD ["./myapp"]
