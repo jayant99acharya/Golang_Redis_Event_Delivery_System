@@ -295,7 +295,7 @@ type MockDestination1 struct{}
 
 func (md *MockDestination1) Send(event Event) bool {
 	randNum := rand.Intn(100)
-	if randNum < 0 {
+	if randNum < 80 {
 		fmt.Printf("MockDestination1 successfully received event: %+v\n", event)
 		return true
 	}
