@@ -8,7 +8,7 @@ WORKDIR /app
 COPY . .
 
 # Build the application
-RUN go build -o output main.go
+RUN go build -o output main.go retry.go redis_client.go process.go notify.go initialise_redis.go ingest.go destinations.go
 
 # Command to run the executable
 CMD ["./output"]
